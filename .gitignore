@@ -1,0 +1,9 @@
+bird_dataset/
+cropped_bird_dataset_square/
+experiment/
+models/
+cropped_bird_dataset.zip
+cropped_bird_dataset_square.zip
+rapport.doc
+.ipynb_checkpoints/
+__pycache__/

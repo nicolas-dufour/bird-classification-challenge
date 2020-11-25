@@ -6,6 +6,8 @@ import torch.optim as optim
 from torchvision import datasets
 from torch.autograd import Variable
 from tqdm import tqdm
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 # Training settings
 parser = argparse.ArgumentParser(description='RecVis A3 training script')
@@ -17,10 +19,6 @@ parser.add_argument('--epochs', type=int, default=10, metavar='N',
                     help='number of epochs to train (default: 10)')
 parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
                     help='learning rate (default: 0.01)')
-parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
-                    help='SGD momentum (default: 0.5)')
-parser.add_argument('--seed', type=int, default=1, metavar='S',
-                    help='random seed (default: 1)')
 parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                     help='how many batches to wait before logging training status')
 parser.add_argument('--experiment', type=str, default='experiment', metavar='E',
@@ -34,69 +32,40 @@ if not os.path.isdir(args.experiment):
     os.makedirs(args.experiment)
 
 # Data initialization and loading
-from data import data_transforms
+from data import ADataset, AugmixDataset, data_transforms_pre_train, data_transforms_train, data_transforms_val
+
+## We resample a validation dataset
+
+train_val_data = torch.utils.data.ConcatDataset([datasets.ImageFolder(data_folder + '/train_images',
+                         transform=None),
+                         datasets.ImageFolder(data_folder + '/val_images', transform=None)
+                  ])
+train_dataset_length = int(len(train_val_data)*0.9)
+lengths = [train_dataset_length,len(train_val_data)-train_dataset_length]
+train_data, val_data = torch.utils.data.random_split(train_val_data,lengths,generator=torch.Generator().manual_seed(42))
+
+train_dataset = AugmixDataset(train_data, transform = [data_transforms_pre_train,data_transforms_train])
+val_dataset = ADataset(val_data, transform = data_transforms_val)
 
 train_loader = torch.utils.data.DataLoader(
-    datasets.ImageFolder(args.data + '/train_images',
-                         transform=data_transforms),
-    batch_size=args.batch_size, shuffle=True, num_workers=1)
+    train_dataset,
+    batch_size=args.batch_size, 
+    shuffle=True)
 val_loader = torch.utils.data.DataLoader(
-    datasets.ImageFolder(args.data + '/val_images',
-                         transform=data_transforms),
-    batch_size=args.batch_size, shuffle=False, num_workers=1)
+    val_dataset,
+    batch_size=args.batch_size, 
+    shuffle=False)
 
-# Neural network and optimizer
-# We define neural net in model.py so that it can be reused by the evaluate.py script
-from model import Net
-model = Net()
-if use_cuda:
-    print('Using GPU')
-    model.cuda()
-else:
-    print('Using CPU')
+from model import VitNetAug
+# Creation and training of the model
+model = VitNetAug(args.lr,args.momentum)
 
-optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+checkpoint_callback = ModelCheckpoint(
+    monitor='val_loss',
+    dirpath=args.experiment,
+    filename='vit-finetuning-{epoch:02d}-{val_loss:.2f}',
+    save_top_k=1,
+    mode='min')
+trainer = pl.Trainer(callbacks=[checkpoint_callback],gpus=1,log_every_n_steps=args.log_interval, max_epochs = args.epochs)
 
-def train(epoch):
-    model.train()
-    for batch_idx, (data, target) in enumerate(train_loader):
-        if use_cuda:
-            data, target = data.cuda(), target.cuda()
-        optimizer.zero_grad()
-        output = model(data)
-        criterion = torch.nn.CrossEntropyLoss(reduction='mean')
-        loss = criterion(output, target)
-        loss.backward()
-        optimizer.step()
-        if batch_idx % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.data.item()))
-
-def validation():
-    model.eval()
-    validation_loss = 0
-    correct = 0
-    for data, target in val_loader:
-        if use_cuda:
-            data, target = data.cuda(), target.cuda()
-        output = model(data)
-        # sum up batch loss
-        criterion = torch.nn.CrossEntropyLoss(reduction='mean')
-        validation_loss += criterion(output, target).data.item()
-        # get the index of the max log-probability
-        pred = output.data.max(1, keepdim=True)[1]
-        correct += pred.eq(target.data.view_as(pred)).cpu().sum()
-
-    validation_loss /= len(val_loader.dataset)
-    print('\nValidation set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)'.format(
-        validation_loss, correct, len(val_loader.dataset),
-        100. * correct / len(val_loader.dataset)))
-
-
-for epoch in range(1, args.epochs + 1):
-    train(epoch)
-    validation()
-    model_file = args.experiment + '/model_' + str(epoch) + '.pth'
-    torch.save(model.state_dict(), model_file)
-    print('Saved model to ' + model_file + '. You can run `python evaluate.py --model ' + model_file + '` to generate the Kaggle formatted csv file\n')
+trainer.fit(model, train_loader,val_loader)

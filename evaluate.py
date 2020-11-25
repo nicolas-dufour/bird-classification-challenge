@@ -5,30 +5,21 @@ import PIL.Image as Image
 
 import torch
 
-from model import Net
+from model import VitNetAug
 
 parser = argparse.ArgumentParser(description='RecVis A3 evaluation script')
 parser.add_argument('--data', type=str, default='bird_dataset', metavar='D',
                     help="folder where data is located. test_images/ need to be found in the folder")
-parser.add_argument('--model', type=str, metavar='M',
+parser.add_argument('--model-checkpoint', type=str, metavar='M',
                     help="the model file to be evaluated. Usually it is of the form model_X.pth")
 parser.add_argument('--outfile', type=str, default='experiment/kaggle.csv', metavar='D',
                     help="name of the output csv file")
+parser.add_argument('--batch-size', type=int, default=64, metavar='B',
+                    help='input batch size for testing (default: 64)')
 
 args = parser.parse_args()
-use_cuda = torch.cuda.is_available()
 
-state_dict = torch.load(args.model)
-model = Net()
-model.load_state_dict(state_dict)
-model.eval()
-if use_cuda:
-    print('Using GPU')
-    model.cuda()
-else:
-    print('Using CPU')
-
-from data import data_transforms
+from data import data_transforms_val
 
 test_dir = args.data + '/test_images/mistery_category'
 
@@ -38,22 +29,56 @@ def pil_loader(path):
         with Image.open(f) as img:
             return img.convert('RGB')
 
+class TestDataset(torch.utils.data.Dataset):
+  'Dataset for testing'
+  def __init__(self,dir_path, transform=None):
+        self.img_paths = [path for path in os.listdir(dir_path) if 'jpg' in path]
+        self.transform = transform
+        self.dir_path = dir_path
 
-output_file = open(args.outfile, "w")
-output_file.write("Id,Category\n")
-for f in tqdm(os.listdir(test_dir)):
-    if 'jpg' in f:
-        data = data_transforms(pil_loader(test_dir + '/' + f))
-        data = data.view(1, data.size(0), data.size(1), data.size(2))
-        if use_cuda:
-            data = data.cuda()
-        output = model(data)
+  def __len__(self):
+        'Denotes the total number of samples'
+        return len(self.img_paths)
+
+  def __getitem__(self, index):
+        img_path = self.img_paths[index]
+        img = np.array(pil_loader(self.dir_path + '/' + img_path))
+        if self.transform:
+            data = self.transform(image = img)['image']
+        id = img_path[:-4]
+        return data, id
+data_transforms_test = A.Compose([
+        A.Resize(384, 384),
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2()
+                                  
+])
+
+
+def make_kaggle_submission(model,data_path,output_file,batch_size=32):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    model.eval()
+    test_data = TestDataset(data_path, transform = data_transforms_test)
+    test_loader = torch.utils.data.DataLoader(
+                    test_data,
+                    batch_size=batch_size, 
+                    shuffle=False
+                    )
+    output_array = np.array(['Id','Category']).reshape(2,1)
+    for _, (data, id) in enumerate(tqdm(test_loader)):
+        output = model(data.to(device))
         pred = output.data.max(1, keepdim=True)[1]
-        output_file.write("%s,%d\n" % (f[:-4], pred))
+        submissions = np.array([id,pred.cpu().numpy().flatten()])
+        output_array = np.hstack((output_array,submissions))
+    import pandas as pd
+    pd.DataFrame(output_array.T).to_csv(output_file,header=False,index=False)
 
-output_file.close()
+def __main__():
+    model = VitNetAug().load_from_checkpoint(args.model)
+    model.eval()
+    make_kaggle_submission(model,args.data,args.outfile,args.batch_size)
 
-print("Succesfully wrote " + args.outfile + ', you can upload this file to the kaggle competition website')
         
 
 
