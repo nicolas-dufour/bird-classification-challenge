@@ -1,4 +1,4 @@
-## Object recognition and computer vision 2020/2021
+## Object recognition and computer vision 2020/2021 bird classification competition
 
 ### This is my submission for the data challenge of the MVA recvis 2020 class
 
