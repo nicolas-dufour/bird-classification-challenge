@@ -4,6 +4,10 @@
 
 This submission allowed me to finish 1st out of 167 participants.
 
+The solution consist in finetuning a Vision Transformer (ViT) (https://github.com/google-research/vision_transformer) and finetuning it using a heavy augmentation pipeline. We also use the Augmix (https://arxiv.org/abs/1912.02781) data augmentation and regularization to make sure we don't overfit our model which yields the optimal performances.
+
+We preprocess the data finding the birds in the images using the Detecron2 library (https://github.com/facebookresearch/detectron2).
+
 Challenge link: https://www.kaggle.com/c/mva-recvis-2020
 
 Class link: https://www.di.ens.fr/willow/teaching/recvis20/
