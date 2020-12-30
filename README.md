@@ -11,3 +11,5 @@ We preprocess the data finding the birds in the images using the Detecron2 libra
 Challenge link: https://www.kaggle.com/c/mva-recvis-2020
 
 Class link: https://www.di.ens.fr/willow/teaching/recvis20/
+<p align='center'><img src= 'bird.png'/></p>
+<p align='center'>Bird detection to focus the frame on the birds and remove background biases</p>
